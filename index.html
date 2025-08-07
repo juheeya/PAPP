@@ -1,0 +1,1751 @@
+import React, { useState, useEffect, createContext, useContext } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithCustomToken, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from 'firebase/firestore';
+import { ChevronLeft, ChevronRight, Plus, Pencil, Trash2, CalendarDays, Factory, Box, Home, CreditCard, Users, Search } from 'lucide-react';
+
+// __app_id, __firebase_config, __initial_auth_token are provided by the environment
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+// Firebase Context to provide db, auth, and userId
+const FirebaseContext = createContext(null);
+
+const FirebaseProvider = ({ children }) => {
+  const [db, setDb] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const [userId, setUserId] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const initFirebase = async () => {
+      try {
+        const app = initializeApp(firebaseConfig);
+        const firestore = getFirestore(app);
+        const authService = getAuth(app);
+        setDb(firestore);
+        setAuth(authService);
+
+        // Sign in
+        if (initialAuthToken) {
+          await signInWithCustomToken(authService, initialAuthToken);
+        } else {
+          await signInAnonymously(authService);
+        }
+
+        // Listen for auth state changes
+        const unsubscribe = onAuthStateChanged(authService, (user) => {
+          if (user) {
+            setUserId(user.uid);
+          } else {
+            setUserId(null);
+          }
+          setLoading(false);
+        });
+
+        return () => unsubscribe();
+      } catch (error) {
+        console.error("Firebase initialization or sign-in failed:", error);
+        setLoading(false);
+      }
+    };
+
+    initFirebase();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="text-xl font-semibold text-gray-700">Loading...</div>
+      </div>
+    );
+  }
+
+  return (
+    <FirebaseContext.Provider value={{ db, auth, userId, appId }}>
+      {children}
+    </FirebaseContext.Provider>
+  );
+};
+
+const useFirebase = () => useContext(FirebaseContext);
+
+// Utility for creating a unique ID
+const createId = () => `id-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+// Base Layout component with Sidebar
+const AppLayout = ({ children, activePage, onNavigate }) => {
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const { userId } = useFirebase();
+
+  const navItems = [
+    { id: 'dashboard', label: '대시보드', icon: <Home className="w-5 h-5" /> },
+    { id: 'products', label: '제품 관리', icon: <Box className="w-5 h-5" /> },
+    { id: 'orders', label: '발주 관리', icon: <CalendarDays className="w-5 h-5" /> },
+    { id: 'payments', label: '결제 관리', icon: <CreditCard className="w-5 h-5" /> },
+    { id: 'suppliers', label: '거래처 관리', icon: <Users className="w-5 h-5" /> },
+    { id: 'factories', label: '공장 관리', icon: <Factory className="w-5 h-5" /> },
+  ];
+
+  return (
+    <div className="flex min-h-screen bg-gray-50">
+      {/* Sidebar */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-xl transform transition-transform duration-300 ease-in-out lg:translate-x-0 ${
+          isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="flex items-center justify-between p-6 border-b">
+          <h1 className="text-xl font-bold text-gray-800">Production App</h1>
+          <button onClick={() => setIsSidebarOpen(false)} className="text-gray-500 lg:hidden">
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <nav className="p-4">
+          <ul>
+            {navItems.map((item) => (
+              <li key={item.id} className="mb-2">
+                <button
+                  onClick={() => {
+                    onNavigate(item.id);
+                    setIsSidebarOpen(false);
+                  }}
+                  className={`flex items-center w-full p-3 rounded-lg transition-colors duration-200 ${
+                    activePage === item.id ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  {item.icon}
+                  <span className="ml-3 font-medium">{item.label}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </nav>
+        {userId && (
+          <div className="absolute bottom-0 left-0 w-full p-4 text-xs text-gray-500 border-t">
+            <p>User ID:</p>
+            <p className="truncate font-mono">{userId}</p>
+          </div>
+        )}
+      </aside>
+
+      {/* Main Content Area */}
+      <main className="flex-1 lg:ml-64 p-4 lg:p-8 transition-all duration-300">
+        <header className="flex items-center justify-between py-4 mb-6">
+          <button onClick={() => setIsSidebarOpen(true)} className="text-gray-600 lg:hidden">
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          <h2 className="text-2xl font-bold text-gray-800">{navItems.find(item => item.id === activePage)?.label}</h2>
+        </header>
+        {children}
+      </main>
+    </div>
+  );
+};
+
+// Reusable Modal Component
+const Modal = ({ isOpen, title, onClose, children }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+      <div className="bg-white rounded-xl shadow-2xl p-6 m-4 w-full max-w-2xl transform transition-all scale-100">
+        <div className="flex justify-between items-center pb-3 border-b border-gray-200">
+          <h3 className="text-xl font-bold">{title}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div className="mt-4 max-h-[80vh] overflow-y-auto">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Utility function to calculate order breakdown
+const recalculateOrderBreakdown = (productDetails, orderDetails, suppliers, factories) => {
+  const breakdown = {};
+
+  if (!productDetails) {
+    console.warn("recalculateOrderBreakdown: productDetails is undefined.");
+    return {};
+  }
+
+  // Calculate material quantities based on orders
+  (productDetails.materials || []).forEach(material => {
+    const supplierId = material.supplier_id;
+    const supplierName = suppliers.find(s => s.id === supplierId)?.name || "Unknown";
+
+    if (!breakdown[supplierId]) {
+      breakdown[supplierId] = { supplier_name: supplierName, total_cost: 0, materials: {} };
+    }
+
+    if (!breakdown[supplierId].materials[material.name]) {
+      breakdown[supplierId].materials[material.name] = {
+        unit: material.unit,
+        unit_price: material.unit_price,
+        details: {},
+      };
+    }
+
+    const materialDetail = breakdown[supplierId].materials[material.name];
+
+    if (material.color_details && '공통' in material.color_details) {
+      let totalQuantity = 0;
+      orderDetails.forEach(detail => {
+        totalQuantity += detail.quantity;
+      });
+
+      if (totalQuantity > 0) {
+        const requiredMaterial = totalQuantity * material.consumption_rate;
+        const cost = requiredMaterial * material.unit_price;
+
+        if (!materialDetail.details['공통']) {
+          materialDetail.details['공통'] = { quantity: 0, cost: 0, material_detail_value: material.color_details['공통'] };
+        }
+        materialDetail.details['공통'].quantity += requiredMaterial;
+        materialDetail.details['공통'].cost += cost;
+        breakdown[supplierId].total_cost += cost;
+      }
+    } else {
+      orderDetails.forEach(detail => {
+        const quantity = detail.quantity;
+        const materialDetailValue = material.color_details?.[detail.color];
+
+        if (quantity > 0 && materialDetailValue) {
+          const requiredMaterial = quantity * material.consumption_rate;
+          const cost = requiredMaterial * material.unit_price;
+
+          if (!materialDetail.details[detail.color]) {
+            materialDetail.details[detail.color] = { quantity: 0, cost: 0, material_detail_value: materialDetailValue };
+          }
+          materialDetail.details[detail.color].quantity += requiredMaterial;
+          materialDetail.details[detail.color].cost += cost;
+          breakdown[supplierId].total_cost += cost;
+        }
+      });
+    }
+  });
+
+  // Calculate labor costs
+  (productDetails.factories || []).forEach(factory => {
+    const factoryId = factory.id;
+    const factoryName = factories.find(f => f.id === factoryId)?.name || factory.name || "Unknown";
+    const laborCost = factory.labor_cost;
+    let totalQuantity = 0;
+    orderDetails.forEach(detail => {
+      totalQuantity += detail.quantity;
+    });
+
+    if (totalQuantity > 0) {
+      if (!breakdown[factoryId]) {
+        breakdown[factoryId] = { supplier_name: factoryName, total_cost: 0, materials: {} };
+      }
+      const cost = totalQuantity * laborCost;
+      if (!breakdown[factoryId].materials['공임']) {
+        breakdown[factoryId].materials['공임'] = {
+          unit: '장',
+          unit_price: laborCost,
+          details: {}
+        };
+      }
+      breakdown[factoryId].materials['공임'].details['전체'] = {
+        quantity: totalQuantity,
+        cost: cost,
+        material_detail_value: 'N/A'
+      };
+      breakdown[factoryId].total_cost += cost;
+    }
+  });
+
+  return breakdown;
+};
+
+
+// Main App Component
+const App = () => {
+  const [currentPage, setCurrentPage] = useState('dashboard');
+  const [modal, setModal] = useState({ isOpen: false, type: null, data: null });
+  const [products, setProducts] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
+  const [factories, setFactries] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const { db, userId, appId } = useFirebase();
+
+  // Firestore listeners
+  useEffect(() => {
+    if (!db || !userId) return;
+
+    const productsCollectionRef = collection(db, 'artifacts', appId, 'users', userId, 'products');
+    const suppliersCollectionRef = collection(db, 'artifacts', appId, 'users', userId, 'suppliers');
+    const factoriesCollectionRef = collection(db, 'artifacts', appId, 'users', userId, 'factories');
+    const ordersCollectionRef = collection(db, 'artifacts', appId, 'users', userId, 'orders');
+    const paymentsCollectionRef = collection(db, 'artifacts', appId, 'users', userId, 'payments');
+
+    const unsubscribeProducts = onSnapshot(productsCollectionRef, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setProducts(data);
+    });
+
+    const unsubscribeSuppliers = onSnapshot(suppliersCollectionRef, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setSuppliers(data);
+    });
+
+    const unsubscribeFactories = onSnapshot(factoriesCollectionRef, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setFactries(data);
+    });
+
+    const unsubscribeOrders = onSnapshot(ordersCollectionRef, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setOrders(data);
+    });
+
+    const unsubscribePayments = onSnapshot(paymentsCollectionRef, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setPayments(data);
+    });
+
+    return () => {
+      unsubscribeProducts();
+      unsubscribeSuppliers();
+      unsubscribeFactories();
+      unsubscribeOrders();
+      unsubscribePayments();
+    };
+  }, [db, userId, appId]);
+
+  // CRUD functions
+  const addDocument = async (collectionName, data) => {
+    try {
+      const collectionRef = collection(db, 'artifacts', appId, 'users', userId, collectionName);
+      const docRef = await addDoc(collectionRef, data); // Return the DocumentReference
+      return docRef;
+    } catch (e) {
+      console.error("Error adding document: ", e);
+      return null; // Return null on error
+    }
+  };
+
+  const updateDocument = async (collectionName, docId, data) => {
+    try {
+      const docRef = doc(db, 'artifacts', appId, 'users', userId, collectionName, docId);
+      await updateDoc(docRef, data);
+    } catch (e) {
+      console.error("Error updating document: ", e);
+    }
+  };
+
+  const deleteDocument = async (collectionName, docId) => {
+    try {
+      const docRef = doc(db, 'artifacts', appId, 'users', userId, collectionName, docId);
+      await deleteDoc(docRef);
+    } catch (e) {
+      console.error("Error deleting document: ", e);
+    }
+  };
+
+  // Helper to find a document by ID in a state array
+  const findById = (arr, id) => arr.find(item => item.id === id);
+
+  // Render Page Content based on currentPage state
+  const renderPage = () => {
+    switch (currentPage) {
+      case 'dashboard':
+        return <Dashboard products={products} orders={orders} payments={payments} suppliers={suppliers} factories={factories} />;
+      case 'products':
+        return (
+          <ProductManagement
+            products={products}
+            suppliers={suppliers}
+            factories={factories}
+            onAdd={addDocument}
+            onUpdate={updateDocument}
+            onDelete={deleteDocument}
+            onOpenModal={(type, data) => setModal({ isOpen: true, type, data })}
+          />
+        );
+      case 'orders':
+        return (
+          <CalendarView
+            orders={orders}
+            products={products}
+            suppliers={suppliers}
+            onAddOrder={(product) => setModal({ isOpen: true, type: 'addOrder', data: product })}
+            onOpenOrderDetails={(order) => setModal({ isOpen: true, type: 'orderDetails', data: order })}
+          />
+        );
+      case 'payments':
+        return (
+          <PaymentManagement
+            suppliers={suppliers}
+            orders={orders}
+            payments={payments}
+            products={products}
+            factories={factories} // Pass factories here
+            onAddPayment={addDocument}
+          />
+        );
+      case 'suppliers':
+        return (
+          <SupplierManagement
+            suppliers={suppliers}
+            onAdd={addDocument}
+            onUpdate={updateDocument}
+            onDelete={deleteDocument}
+          />
+        );
+      case 'factories':
+        return (
+          <FactoryManagement
+            factories={factories}
+            onAdd={addDocument}
+            onUpdate={updateDocument}
+            onDelete={deleteDocument}
+          />
+        );
+      default:
+        return <Dashboard />;
+    }
+  };
+
+  // Render Modal Content based on modal state
+  const renderModalContent = () => {
+    if (!modal.isOpen) return null;
+    switch (modal.type) {
+      case 'addOrder':
+        return (
+          <AddOrderModal
+            product={modal.data}
+            orders={orders}
+            products={products}
+            onClose={() => setModal({ isOpen: false, type: null, data: null })}
+            onAddOrder={addDocument}
+            suppliers={suppliers} // Added suppliers prop
+            factories={factories} // Pass factories to AddOrderModal
+          />
+        );
+      case 'orderDetails':
+        return (
+          <OrderDetailsModal
+            order={modal.data}
+            products={products}
+            suppliers={suppliers}
+            onClose={() => setModal({ isOpen: false, type: null, data: null })}
+          />
+        );
+      case 'paymentDetails':
+        return (
+          <PaymentDetailsModal
+            paymentHistory={modal.data}
+            onClose={() => setModal({ isOpen: false, type: null, data: null })}
+          />
+        );
+      case 'productForm':
+        return (
+          <ProductFormModal
+            product={modal.data}
+            suppliers={suppliers}
+            factories={factories}
+            onClose={() => setModal({ isOpen: false, type: null, data: null })}
+            onSave={async (data) => { // Make onSave async
+              let productIdToUpdate = modal.data?.id;
+              let savedProductData = data; // Keep track of the actual data saved/updated
+
+              // First, update the product itself
+              if (productIdToUpdate) {
+                await updateDocument('products', productIdToUpdate, data);
+                // For updates, the 'data' passed is already the updated product data
+              } else {
+                // If adding a new product, get its ID after adding
+                const docRef = await addDocument('products', data);
+                if (docRef) { // Ensure docRef is not null before accessing its id
+                  productIdToUpdate = docRef.id;
+                  savedProductData = { ...data, id: docRef.id }; // Add the ID to the saved data
+                } else {
+                  console.error("Failed to add new product, docRef is null.");
+                  setModal({ isOpen: false, type: null, data: null });
+                  return; // Exit if product addition failed
+                }
+              }
+
+              // After product is saved, recalculate breakdowns for affected orders
+              // Ensure productIdToUpdate is valid before querying
+              if (productIdToUpdate) {
+                // Use the savedProductData which includes the latest factory/material info
+                const updatedProduct = savedProductData; 
+
+                // Fetch all orders to find those related to this product
+                const ordersCollectionRef = collection(db, 'artifacts', appId, 'users', userId, 'orders');
+                const q = query(ordersCollectionRef, where('product_id', '==', updatedProduct.id));
+                const querySnapshot = await getDocs(q);
+
+                querySnapshot.forEach(async (orderDoc) => {
+                  const existingOrder = { id: orderDoc.id, ...orderDoc.data() };
+                  // Recalculate breakdown using the updated product data and existing order details
+                  const newOrderBreakdown = recalculateOrderBreakdown(updatedProduct, existingOrder.details, suppliers, factories);
+                  await updateDocument('orders', existingOrder.id, { order_breakdown: newOrderBreakdown });
+                });
+              } else {
+                console.error("Product ID is undefined, cannot update related orders.");
+              }
+
+              setModal({ isOpen: false, type: null, data: null });
+            }}
+          />
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="font-sans antialiased text-gray-800">
+      <AppLayout activePage={currentPage} onNavigate={setCurrentPage}>
+        {renderPage()}
+      </AppLayout>
+      {modal.isOpen && renderModalContent()}
+    </div>
+  );
+};
+
+// Dashboard Component
+const Dashboard = ({ products, orders, payments, suppliers, factories }) => { // Receive new props
+  const totalProducts = products?.length || 0;
+  const totalOrders = orders?.length || 0;
+  const totalPayments = payments?.length || 0;
+
+  // Calculate total payments for suppliers and factories
+  const totalSupplierPayments = payments
+    .filter(p => p.entity_type === 'supplier')
+    .reduce((sum, p) => sum + p.amount, 0);
+
+  const totalFactoryPayments = payments
+    .filter(p => p.entity_type === 'factory')
+    .reduce((sum, p) => sum + p.amount, 0);
+
+  // Calculate total order costs for suppliers and factories
+  let totalSupplierOrderCost = 0;
+  let totalFactoryOrderCost = 0;
+
+  orders.forEach(order => {
+    Object.entries(order.order_breakdown).forEach(([entityId, data]) => {
+      // Check if this entityId corresponds to a supplier
+      const isSupplier = suppliers.some(s => s.id === entityId);
+      // Check if this entityId corresponds to a factory
+      const isFactory = factories.some(f => f.id === entityId);
+
+      if (isSupplier) {
+        totalSupplierOrderCost += data.total_cost;
+      } else if (isFactory) {
+        totalFactoryOrderCost += data.total_cost;
+      }
+    });
+  });
+
+  const supplierRemainingBalance = totalSupplierOrderCost - totalSupplierPayments;
+  const factoryRemainingBalance = totalFactoryOrderCost - totalFactoryPayments;
+
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <InfoCard title="총 제품 수" value={totalProducts} icon={<Box />} />
+      <InfoCard title="총 발주 건수" value={totalOrders} icon={<CalendarDays />} />
+      <InfoCard title="총 결제 건수" value={totalPayments} icon={<CreditCard />} />
+      <InfoCard title="거래처 총 결제 금액" value={`${totalSupplierPayments.toLocaleString()}원`} icon={<Users />} />
+      <InfoCard title="공장 총 결제 금액" value={`${totalFactoryPayments.toLocaleString()}원`} icon={<Factory />} />
+      <InfoCard title="거래처 총 잔액" value={`${supplierRemainingBalance.toLocaleString()}원`} icon={<Users />} />
+      <InfoCard title="공장 총 잔액" value={`${factoryRemainingBalance.toLocaleString()}원`} icon={<Factory />} />
+    </div>
+  );
+};
+
+// Info Card Component
+const InfoCard = ({ title, value, icon }) => (
+  <div className="bg-white p-6 rounded-xl shadow-lg flex items-center space-x-4">
+    <div className="p-3 bg-indigo-100 text-indigo-600 rounded-full">
+      {icon}
+    </div>
+    <div>
+      <p className="text-gray-500 text-sm">{title}</p>
+      <h3 className="text-2xl font-bold">{value}</h3>
+    </div>
+  </div>
+);
+
+// Product Management
+const ProductManagement = ({ products, suppliers, factories, onAdd, onUpdate, onDelete, onOpenModal }) => {
+  const [editingProduct, setEditingProduct] = useState(null);
+
+  return (
+    <div className="bg-white p-6 rounded-xl shadow-lg">
+      <div className="flex justify-between items-center mb-6">
+        <h3 className="text-2xl font-bold">제품 목록</h3>
+        <button
+          onClick={() => onOpenModal('productForm', null)}
+          className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors shadow-md flex items-center"
+        >
+          <Plus className="w-5 h-5 mr-2" /> 새 제품 추가
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50"><tr>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">제품명</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">색상</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">사이즈</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">공장</th>
+            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+          </tr></thead>
+          <tbody className="bg-white divide-y divide-gray-200">{
+            products.map((product) => (
+              <tr key={product.id}>
+                <td className="px-6 py-4 whitespace-nowrap">{product.name}</td>
+                <td className="px-6 py-4 whitespace-nowrap">{product.colors?.join(', ')}</td>
+                <td className="px-6 py-4 whitespace-nowrap">{product.sizes?.join(', ')}</td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  {product.factories?.map(f => f.name).join(', ')}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                  <button
+                    onClick={() => onOpenModal('productForm', product)}
+                    className="text-indigo-600 hover:text-indigo-900 mr-2"
+                  >
+                    <Pencil className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={() => onDelete('products', product.id)}
+                    className="text-red-600 hover:text-red-900"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+// Product Form Modal
+const ProductFormModal = ({ product, suppliers, factories, onClose, onSave }) => {
+  const [formData, setFormData] = useState({
+    name: '',
+    item: '',
+    ...product,
+    colors: product?.colors?.join(', ') || '',
+    sizes: product?.sizes?.join(', ') || '',
+    factories: product?.factories || [],
+    materials: product?.materials || [],
+  });
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData({ ...formData, [name]: value });
+  };
+
+  const handleFactoryChange = (factoryId, laborCost) => {
+    const isSelected = formData.factories.some(f => f.id === factoryId);
+    if (isSelected) {
+      setFormData({
+        ...formData,
+        factories: formData.factories.filter(f => f.id !== factoryId)
+      });
+    } else {
+      setFormData({
+        ...formData,
+        factories: [...formData.factories, { id: factoryId, name: factories.find(f => f.id === factoryId)?.name, labor_cost: laborCost }]
+      });
+    }
+  };
+
+  const handleMaterialChange = (index, field, value) => {
+    const newMaterials = [...formData.materials];
+    newMaterials[index][field] = value;
+    setFormData({ ...formData, materials: newMaterials });
+  };
+  
+  // New handler for color-specific material details
+  const handleMaterialColorDetailChange = (materialIndex, color, value) => {
+    const newMaterials = [...formData.materials];
+    if (!newMaterials[materialIndex].color_details) {
+      newMaterials[materialIndex].color_details = {};
+    }
+    newMaterials[materialIndex].color_details[color] = value;
+    setFormData({ ...formData, materials: newMaterials });
+  };
+
+  const handleMaterialCommonChange = (materialIndex, isCommon) => {
+    const newMaterials = [...formData.materials];
+    if (isCommon) {
+      // When common is checked, ensure '공통' key exists in color_details
+      newMaterials[materialIndex].color_details = { 
+        ...newMaterials[materialIndex].color_details,
+        '공통': newMaterials[materialIndex].color_details['공통'] || '' // Keep existing value or set to empty string
+      };
+    } else {
+      // When common is unchecked, remove '공통' key and any other color details
+      const { '공통': removedCommon, ...rest } = newMaterials[materialIndex].color_details;
+      newMaterials[materialIndex].color_details = rest; // Keep only non-common color details
+      if (Object.keys(newMaterials[materialIndex].color_details).length === 0) {
+        newMaterials[materialIndex].color_details = {}; // Ensure it's an empty object if no other details
+      }
+    }
+    setFormData({ ...formData, materials: newMaterials });
+  };
+
+  const addMaterial = () => {
+    setFormData({
+      ...formData,
+      materials: [...formData.materials, { id: createId(), name: '', supplier_id: '', unit_price: '', unit: '', consumption_rate: '', color_details: {} }]
+    });
+  };
+
+  const removeMaterial = (id) => {
+    setFormData({
+      ...formData,
+      materials: formData.materials.filter(mat => mat.id !== id)
+    });
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const dataToSave = {
+      ...formData,
+      colors: formData.colors.split(',').map(c => c.trim()).filter(c => c),
+      sizes: formData.sizes.split(',').map(s => s.trim()).filter(s => s),
+    };
+    onSave(dataToSave);
+  };
+
+  // Parse colors from the comma-separated string for use in material color selection
+  const productColors = formData.colors.split(',').map(c => c.trim()).filter(c => c);
+
+  return (
+    <Modal isOpen={true} title={product ? '제품 수정' : '새 제품 추가'} onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700">제품명</label>
+          <input
+            type="text"
+            name="name"
+            value={formData.name}
+            onChange={handleChange}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+            required
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700">아이템</label>
+          <input
+            type="text"
+            name="item"
+            value={formData.item}
+            onChange={handleChange}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700">색상 (쉼표로 구분)</label>
+          <input
+            type="text"
+            name="colors"
+            value={formData.colors}
+            onChange={handleChange}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+            required
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700">사이즈 (쉼표로 구분)</label>
+          <input
+            type="text"
+            name="sizes"
+            value={formData.sizes}
+            onChange={handleChange}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+            required
+          />
+        </div>
+        <div>
+          <h4 className="text-lg font-semibold mt-4 mb-2">공장 정보</h4>
+          {factories.map(factory => (
+            <div key={factory.id} className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                checked={formData.factories.some(f => f.id === factory.id)}
+                onChange={(e) => handleFactoryChange(factory.id, e.target.checked ? '' : 0)}
+                className="rounded text-indigo-600 focus:ring-indigo-500"
+              />
+              <span className="font-medium">{factory.name}</span>
+              {formData.factories.some(f => f.id === factory.id) && (
+                <input
+                  type="number"
+                  placeholder="공임"
+                  value={formData.factories.find(f => f.id === factory.id)?.labor_cost || ''}
+                  onChange={(e) => {
+                    const newFactories = formData.factories.map(f =>
+                      f.id === factory.id ? { ...f, labor_cost: Number(e.target.value) } : f
+                    );
+                    setFormData({ ...formData, factories: newFactories });
+                  }}
+                  className="w-24 rounded-md border-gray-300 text-sm"
+                />
+              )}
+            </div>
+          ))}
+        </div>
+        <div>
+          <h4 className="text-lg font-semibold mt-4 mb-2">자재 정보</h4>
+          {formData.materials.map((mat, index) => (
+            <div key={mat.id} className="border p-4 rounded-lg mb-2 relative">
+              <button
+                type="button"
+                onClick={() => removeMaterial(mat.id)}
+                className="absolute top-2 right-2 text-red-500 hover:text-red-700"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  placeholder="품명"
+                  name={`materials[${index}].name`}
+                  value={mat.name}
+                  onChange={(e) => handleMaterialChange(index, 'name', e.target.value)}
+                  className="rounded-md border-gray-300 text-sm"
+                  required
+                />
+                <select
+                  name={`materials[${index}].supplier_id`}
+                  value={mat.supplier_id}
+                  onChange={(e) => handleMaterialChange(index, 'supplier_id', e.target.value)}
+                  className="rounded-md border-gray-300 text-sm"
+                  required
+                >
+                  <option value="">거래처 선택</option>
+                  {suppliers.map(sup => <option key={sup.id} value={sup.id}>{sup.name}</option>)}
+                </select>
+                <input
+                  type="number"
+                  placeholder="단가"
+                  name={`materials[${index}].unit_price`}
+                  value={mat.unit_price}
+                  onChange={(e) => handleMaterialChange(index, 'unit_price', Number(e.target.value))}
+                  className="rounded-md border-gray-300 text-sm"
+                  required
+                />
+                <input
+                  type="text"
+                  placeholder="단위 (e.g., ly, EA)"
+                  name={`materials[${index}].unit`}
+                  value={mat.unit}
+                  onChange={(e) => handleMaterialChange(index, 'unit', e.target.value)}
+                  className="rounded-md border-gray-300 text-sm"
+                  required
+                />
+                <input
+                  type="number"
+                  placeholder="요척"
+                  name={`materials[${index}].consumption_rate`}
+                  value={mat.consumption_rate}
+                  onChange={(e) => handleMaterialChange(index, 'consumption_rate', Number(e.target.value))}
+                  className="rounded-md border-gray-300 text-sm"
+                  required
+                />
+                {/* Checkbox for common material */}
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={mat.color_details && '공통' in mat.color_details} // Check if '공통' key exists
+                    onChange={(e) => handleMaterialCommonChange(index, e.target.checked)}
+                    className="rounded text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span className="text-sm">공통</span>
+                </div>
+              </div>
+              
+              {/* Conditional rendering for common detail or color details */}
+              {mat.color_details && '공통' in mat.color_details ? ( // If '공통' key exists
+                <div className="mt-4 space-y-2">
+                  <p className="font-medium text-sm">공통 자재 상세 정보:</p>
+                  <div className="flex items-center space-x-2">
+                    <label className="w-20 text-sm font-medium">공통</label>
+                    <input
+                      type="text"
+                      placeholder="상세 내용"
+                      value={mat.color_details['공통'] || ''} // Use '공통' key
+                      onChange={(e) => handleMaterialColorDetailChange(index, '공통', e.target.value)} // Update '공통' key
+                      className="flex-1 rounded-md border-gray-300 text-sm"
+                    />
+                  </div>
+                </div>
+              ) : ( // If '공통' is NOT checked, show individual color inputs
+                productColors.length > 0 && (
+                  <div className="mt-4 space-y-2">
+                    <p className="font-medium text-sm">색상별 상세 정보:</p>
+                    {productColors.map(color => (
+                      <div key={color} className="flex items-center space-x-2">
+                        <label className="w-20 text-sm font-medium">{color}</label>
+                        <input
+                          type="text"
+                          placeholder="상세 내용"
+                          value={mat.color_details[color] || ''}
+                          onChange={(e) => handleMaterialColorDetailChange(index, color, e.target.value)}
+                          className="flex-1 rounded-md border-gray-300 text-sm"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )
+              )}
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addMaterial}
+            className="w-full bg-gray-100 text-gray-600 border border-gray-300 rounded-md py-2 text-sm hover:bg-gray-200 transition-colors mt-2"
+          >
+            + 자재 추가
+          </button>
+        </div>
+        <div className="flex justify-end space-x-2 pt-4 border-t">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition-colors"
+          >
+            취소
+          </button>
+          <button
+            type="submit"
+            className="px-4 py-2 text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+          >
+            저장
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+};
+
+
+// Order Calendar View
+const CalendarView = ({ orders, products, suppliers, onAddOrder, onOpenOrderDetails }) => {
+  const [currentDate, setCurrentDate] = useState(new Date());
+
+  const daysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
+  const firstDayOfMonth = (year, month) => new Date(year, month, 1).getDay();
+
+  const renderCalendarDays = () => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const numDays = daysInMonth(year, month);
+    const startDay = firstDayOfMonth(year, month);
+    const days = [];
+
+    // Empty days at the start
+    for (let i = 0; i < startDay; i++) {
+      days.push(<div key={`empty-${i}`} className="p-2 border border-gray-200"></div>);
+    }
+
+    for (let day = 1; day <= numDays; day++) {
+      const dayDate = new Date(year, month, day);
+      const ordersOnDay = orders.filter(order => new Date(order.order_date).toDateString() === dayDate.toDateString());
+
+      days.push(
+        <div key={day} className="relative p-2 border border-gray-200 bg-white rounded-lg min-h-[100px] flex flex-col">
+          <span className="font-semibold text-gray-700">{day}</span>
+          <div className="mt-2 flex-1 space-y-1 overflow-y-auto">
+            {ordersOnDay.map(order => {
+              const product = products.find(p => p.id === order.product_id);
+              return (
+                <button
+                  key={order.id}
+                  onClick={() => onOpenOrderDetails(order)}
+                  className="w-full text-left bg-indigo-100 text-indigo-700 p-1 rounded-md text-xs font-medium truncate hover:bg-indigo-200 transition-colors"
+                >
+                  {product?.name} ({order.order_round}차)
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+    return days;
+  };
+
+  const getMonthName = (date) => date.toLocaleString('ko-KR', { month: 'long', year: 'numeric' });
+
+  return (
+    <div className="bg-white p-6 rounded-xl shadow-lg">
+      <div className="flex justify-between items-center mb-6">
+        <h3 className="text-2xl font-bold">발주 캘린더</h3>
+        <div className="flex items-center space-x-2">
+          <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))} className="text-gray-600 hover:text-gray-900 transition-colors">
+            <ChevronLeft />
+          </button>
+          <span className="text-lg font-semibold">{getMonthName(currentDate)}</span>
+          <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))} className="text-gray-600 hover:text-gray-900 transition-colors">
+            <ChevronRight />
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-7 gap-1 text-center font-semibold text-sm text-gray-600 border-b border-gray-200 mb-2">
+        <div className="py-2 text-red-500">일</div>
+        <div className="py-2">월</div>
+        <div className="py-2">화</div>
+        <div className="py-2">수</div>
+        <div className="py-2">목</div>
+        <div className="py-2">금</div>
+        <div className="py-2 text-blue-500">토</div>
+      </div>
+      <div className="grid grid-cols-7 gap-1">
+        {renderCalendarDays()}
+      </div>
+      <div className="mt-6 border-t pt-6">
+        <h3 className="text-xl font-bold mb-4">발주 등록</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {products.map(product => (
+            <button
+              key={product.id}
+              onClick={() => onAddOrder(product)}
+              className="bg-indigo-50 text-indigo-700 p-4 rounded-xl text-center hover:bg-indigo-100 transition-colors shadow-sm"
+            >
+              {product.name} 발주 등록
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Add Order Modal - FIX applied here
+const AddOrderModal = ({ product, products, orders, onClose, onAddOrder, suppliers, factories }) => {
+  const [orderDate, setOrderDate] = useState(new Date().toISOString().substring(0, 10));
+  const [orderQuantities, setOrderQuantities] = useState({});
+
+  // UseEffect to initialize orderQuantities state when the product prop changes
+  useEffect(() => {
+    if (product && Array.isArray(product.colors) && product.colors.length > 0 && Array.isArray(product.sizes) && product.sizes.length > 0) {
+      const initialQuantities = {};
+      product.colors.forEach(color => {
+        product.sizes.forEach(size => {
+          initialQuantities[`${color}-${size}`] = 0;
+        });
+      });
+      setOrderQuantities(initialQuantities);
+    } else {
+      setOrderQuantities({});
+    }
+  }, [product]);
+
+  // Handler for quantity input changes
+  const handleQuantityChange = (color, size, e) => {
+    setOrderQuantities({
+      ...orderQuantities,
+      [`${color}-${size}`]: Number(e.target.value)
+    });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const newOrderRound = (orders.filter(o => o.product_id === product.id)?.length || 0) + 1;
+    const orderDetails = Object.entries(orderQuantities)
+      .filter(([key, value]) => value > 0)
+      .map(([key, value]) => {
+        const [color, size] = key.split('-');
+        return { color, size, quantity: value };
+      });
+    
+    if (orderDetails.length === 0) {
+      // Use a custom modal or message box instead of alert()
+      const message = "발주 수량을 입력해 주세요.";
+      // For this example, we'll use a simple alert as a placeholder
+      // In a real app, a custom modal would be implemented here.
+      console.log(message);
+      return;
+    }
+
+    // Use the shared utility function for breakdown calculation
+    const orderBreakdown = recalculateOrderBreakdown(product, orderDetails, suppliers, factories);
+
+    const newOrder = {
+      product_id: product.id,
+      order_date: new Date(orderDate).toISOString(),
+      order_round: newOrderRound,
+      details: orderDetails,
+      order_breakdown: orderBreakdown
+    };
+
+    await onAddOrder('orders', newOrder);
+    onClose();
+  };
+
+  const hasColorsOrSizes = product && Array.isArray(product.colors) && product.colors.length > 0 && Array.isArray(product.sizes) && product.sizes.length > 0;
+
+  return (
+    <Modal isOpen={true} title={`${product.name} 발주 등록`} onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700">발주 날짜</label>
+          <input
+            type="date"
+            value={orderDate}
+            onChange={(e) => setOrderDate(e.target.value)}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+            required
+          />
+        </div>
+        {hasColorsOrSizes ? (
+          <div>
+            <h4 className="text-lg font-semibold">발주 수량 (단위: 장)</h4>
+            <div className="space-y-2 mt-2">
+              {product.colors.map(color => (
+                <div key={color} className="border p-3 rounded-lg">
+                  <h5 className="font-medium text-indigo-600">{color}</h5>
+                  {product.sizes.map(size => (
+                    <div key={`${color}-${size}`} className="flex items-center space-x-2 mt-2">
+                      <label className="w-1/3 text-sm">{size}</label>
+                      <input
+                        type="number"
+                        value={orderQuantities[`${color}-${size}`] || ''}
+                        onChange={(e) => handleQuantityChange(color, size, e)}
+                        className="flex-1 rounded-md border-gray-300 text-sm"
+                        min="0"
+                      />
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="p-4 bg-yellow-50 border-l-4 border-yellow-400 text-yellow-700 rounded">
+            <p className="font-medium"> 색상 및 사이즈 정보가 누락되었습니다.</p>
+            <p className="text-sm">제품 관리에 들어가서 제품의 색상 및 사이즈 정보를 입력해 주세요.</p>
+          </div>
+        )}
+        <div className="flex justify-end space-x-2 pt-4 border-t">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300"
+          >
+            취소
+          </button>
+          <button
+            type="submit"
+            className="px-4 py-2 text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
+            disabled={!hasColorsOrSizes} // Disable save button if no colors/sizes
+          >
+            저장
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+};
+
+
+// Order Details Modal
+const OrderDetailsModal = ({ order, products, suppliers, onClose }) => {
+  if (!order || !products || !suppliers) return null;
+  const product = products.find(p => p.id === order.product_id);
+  const findSupplierName = (id) => suppliers.find(s => s.id === id)?.name || id;
+  if (!product) return <Modal isOpen={true} title="발주 상세 내역" onClose={onClose}><p>제품 정보를 찾을 수 없습니다.</p></Modal>;
+
+  return (
+    <Modal isOpen={true} title="발주 상세 내역" onClose={onClose}>
+      <div className="space-y-4">
+        <p><strong>발주 날짜:</strong> {new Date(order.order_date).toLocaleDateString()}</p>
+        <h4 className="font-bold text-lg mt-4">발주 수량</h4>
+        <ul className="list-disc list-inside space-y-1">
+          {order.details.map((detail, index) => (
+            <li key={index}>{detail.color} {detail.size}: {detail.quantity}장</li>
+          ))}
+        </ul>
+
+        <h4 className="font-bold text-lg mt-6">거래처별 발주 내역</h4>
+        <div className="space-y-4">
+          {Object.entries(order.order_breakdown).map(([supplierId, data]) => (
+            <div key={supplierId} className="border p-4 rounded-lg bg-gray-50">
+              <h5 className="font-semibold text-indigo-700 mb-2">{data.supplier_name || findSupplierName(supplierId)}</h5>
+              <div className="space-y-2">
+                {/* Filter out '공임' (labor cost) from the material details display */}
+                {Object.entries(data.materials)
+                  .filter(([materialName]) => materialName !== '공임')
+                  .map(([materialName, materialData]) => (
+                  <div key={materialName} className="text-sm">
+                    <strong>{materialName}</strong> ({materialData.unit}):
+                    <ul className="list-disc list-inside ml-4">
+                      {Object.entries(materialData.details).map(([colorDetailKey, detail]) => (
+                        <li key={colorDetailKey}>
+                          {detail.material_detail_value}: {detail.quantity.toFixed(2)}{materialData.unit} ({detail.cost.toLocaleString()}원)
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+
+// Payment Management
+const PaymentManagement = ({ suppliers, orders, payments, products, factories, onAddPayment }) => {
+  const [selectedEntityType, setSelectedEntityType] = useState('supplier'); // 'supplier' or 'factory'
+  const [selectedEntityId, setSelectedEntityId] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().substring(0, 10));
+  const [paymentSuccessMessage, setPaymentSuccessMessage] = useState('');
+
+  // Helper to get entity name
+  const getEntityName = (type, id) => {
+    if (type === 'supplier') {
+      return suppliers.find(s => s.id === id)?.name;
+    } else if (type === 'factory') {
+      return factories.find(f => f.id === id)?.name;
+    }
+    return '';
+  };
+
+  const filteredOrders = orders.filter(order => {
+    if (!selectedEntityId) return false;
+
+    const orderDate = new Date(order.order_date);
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+
+    // Check if the order breakdown contains the selected entity's costs
+    const breakdownForEntity = order.order_breakdown[selectedEntityId];
+    if (!breakdownForEntity) return false;
+
+    // Filter by date range
+    return (!start || orderDate >= start) && (!end || orderDate <= end);
+  });
+
+  const getCumulativeData = () => {
+    const cumulative = {};
+    let totalCost = 0;
+
+    filteredOrders.forEach(order => {
+      const orderBreakdown = order.order_breakdown[selectedEntityId];
+      if (orderBreakdown) {
+        totalCost += orderBreakdown.total_cost;
+
+        // Iterate through materials/labor costs for the selected entity
+        Object.entries(orderBreakdown.materials).forEach(([itemName, itemData]) => {
+          if (!cumulative[itemName]) {
+            cumulative[itemName] = { quantity: 0, cost: 0, unit: itemData.unit };
+          }
+          Object.entries(itemData.details).forEach(([, detail]) => {
+            cumulative[itemName].quantity += detail.quantity;
+            cumulative[itemName].cost += detail.cost;
+          });
+        });
+      }
+    });
+
+    const totalPaid = payments
+      .filter(p => p.entity_id === selectedEntityId && p.entity_type === selectedEntityType)
+      .reduce((sum, p) => sum + p.amount, 0);
+
+    return { cumulative, totalCost, totalPaid };
+  };
+
+  const { cumulative, totalCost, totalPaid } = getCumulativeData();
+  const remainingBalance = totalCost - totalPaid;
+
+  const handlePaymentSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedEntityId || !paymentAmount) {
+      console.log("거래처/공장과 결제 금액을 입력해주세요.");
+      return;
+    }
+    const newPayment = {
+      entity_id: selectedEntityId,
+      entity_type: selectedEntityType,
+      amount: Number(paymentAmount),
+      payment_date: new Date(paymentDate).toISOString()
+    };
+    await onAddPayment('payments', newPayment); // Payments collection will now store entity_id and entity_type
+    setPaymentAmount('');
+    setPaymentSuccessMessage('결제가 성공적으로 등록되었습니다!');
+    setTimeout(() => setPaymentSuccessMessage(''), 3000);
+  };
+
+  const currentEntityPayments = payments.filter(p => p.entity_id === selectedEntityId && p.entity_type === selectedEntityType);
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-xl shadow-lg">
+        <h3 className="text-2xl font-bold mb-4">결제 조회</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Entity Type Selector */}
+          <div className="col-span-full flex space-x-4 mb-4">
+            <label className="inline-flex items-center">
+              <input
+                type="radio"
+                name="entityType"
+                value="supplier"
+                checked={selectedEntityType === 'supplier'}
+                onChange={() => { setSelectedEntityType('supplier'); setSelectedEntityId(''); }}
+                className="form-radio text-indigo-600"
+              />
+              <span className="ml-2 text-gray-700">거래처</span>
+            </label>
+            <label className="inline-flex items-center">
+              <input
+                type="radio"
+                name="entityType"
+                value="factory"
+                checked={selectedEntityType === 'factory'}
+                onChange={() => { setSelectedEntityType('factory'); setSelectedEntityId(''); }}
+                className="form-radio text-indigo-600"
+              />
+              <span className="ml-2 text-gray-700">공장</span>
+            </label>
+          </div>
+
+          {/* Entity Selector */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              {selectedEntityType === 'supplier' ? '거래처 선택' : '공장 선택'}
+            </label>
+            <select
+              value={selectedEntityId}
+              onChange={(e) => setSelectedEntityId(e.target.value)}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+            >
+              <option value="">-- {selectedEntityType === 'supplier' ? '거래처' : '공장'} 선택 --</option>
+              {selectedEntityType === 'supplier' ?
+                suppliers.map(sup => <option key={sup.id} value={sup.id}>{sup.name}</option>) :
+                factories.map(fac => <option key={fac.id} value={fac.id}>{fac.name}</option>)
+              }
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">시작 날짜</label>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">종료 날짜</label>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+            />
+          </div>
+        </div>
+      </div>
+      {selectedEntityId && (
+        <div className="bg-white p-6 rounded-xl shadow-lg">
+          <div className="flex justify-between items-center mb-4">
+            <h4 className="text-xl font-bold">{getEntityName(selectedEntityType, selectedEntityId)}</h4>
+          </div>
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center border-b pb-4">
+              <div className="border-r pr-4">
+                <p className="text-sm text-gray-500">누적 발주 금액</p>
+                <p className="text-2xl font-bold text-indigo-600">{totalCost.toLocaleString()}원</p>
+              </div>
+              <div className="border-r pr-4">
+                <p className="text-sm text-gray-500">누적 결제 금액</p>
+                <p className="text-2xl font-bold text-green-600">{totalPaid.toLocaleString()}원</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">잔액</p>
+                <p className="text-2xl font-bold text-red-600">{remainingBalance.toLocaleString()}원</p>
+              </div>
+            </div>
+            
+            <h5 className="font-semibold text-lg">결제 금액 입력</h5>
+            <form onSubmit={handlePaymentSubmit} className="flex items-center space-x-2">
+              <input
+                type="number"
+                value={paymentAmount}
+                onChange={(e) => setPaymentAmount(e.target.value)}
+                placeholder="결제 금액"
+                className="flex-1 rounded-md border-gray-300 shadow-sm"
+                required
+              />
+              <input
+                type="date"
+                value={paymentDate}
+                onChange={(e) => setPaymentDate(e.target.value)}
+                className="w-40 rounded-md border-gray-300 shadow-sm"
+                required
+              />
+              <button
+                type="submit"
+                className="px-4 py-2 text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+              >
+                결제
+              </button>
+            </form>
+            {paymentSuccessMessage && (
+              <div className="mt-2 p-3 bg-green-100 text-green-700 rounded-md text-sm">
+                {paymentSuccessMessage}
+              </div>
+            )}
+
+            <h5 className="font-semibold text-lg mt-6">기간별 품명 누적 수량 및 금액</h5>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50"><tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">품명</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">누적 수량</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">누적 금액</th>
+                </tr></thead>
+                <tbody className="bg-white divide-y divide-gray-200">{
+                  Object.entries(cumulative).map(([name, data]) => (
+                    <tr key={name}>
+                      <td className="px-6 py-4 whitespace-nowrap">{name}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{data.quantity.toFixed(2)}{data.unit}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{data.cost.toLocaleString()}원</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <h5 className="font-semibold text-lg mt-6">결제 내역</h5>
+            <div className="overflow-x-auto">
+              {currentEntityPayments.length > 0 ? (
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50"><tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">날짜</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">결제 금액</th>
+                  </tr></thead>
+                  <tbody className="bg-white divide-y divide-gray-200">{
+                    currentEntityPayments.map(p => (
+                      <tr key={p.id}>
+                        <td className="px-6 py-4 whitespace-nowrap">{new Date(p.payment_date).toLocaleDateString()}</td>
+                        <td className="px-6 py-4 whitespace-nowrap">{p.amount.toLocaleString()}원</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="text-gray-500 text-center py-4">선택된 {selectedEntityType === 'supplier' ? '거래처' : '공장'}에 대한 결제 내역이 없습니다.</p>
+              )}
+            </div>
+
+            <h5 className="font-semibold text-lg mt-6">날짜별 주문 상세 내역</h5>
+            <div className="space-y-4">
+              {filteredOrders.sort((a, b) => new Date(b.order_date) - new Date(a.order_date)).map(order => (
+                <div key={order.id} className="border p-4 rounded-lg bg-gray-50">
+                  <p className="font-semibold text-indigo-700">
+                    {new Date(order.order_date).toLocaleDateString()} - {products.find(p => p.id === order.product_id)?.name} ({order.order_round}차)
+                  </p>
+                  <div className="mt-2 space-y-1">
+                    {Object.entries(order.order_breakdown[selectedEntityId]?.materials || {}).map(([materialName, materialData]) => (
+                      <div key={materialName} className="text-sm">
+                        <strong>{materialName}</strong> ({materialData.unit}):
+                        <ul className="list-disc list-inside ml-4">
+                          {Object.entries(materialData.details).map(([colorDetailKey, detail]) => (
+                            <li key={colorDetailKey}>
+                              {detail.material_detail_value}: {detail.quantity.toFixed(2)}{materialData.unit} ({detail.cost.toLocaleString()}원)
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+// Supplier Management
+const SupplierManagement = ({ suppliers, onAdd, onUpdate, onDelete }) => {
+  const [formData, setFormData] = useState({ name: '', address: '', phone: '', account: '' });
+  const [editingId, setEditingId] = useState(null);
+
+  const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
+
+  const handleEdit = (supplier) => {
+    setEditingId(supplier.id);
+    setFormData(supplier);
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    if (editingId) {
+      await onUpdate('suppliers', editingId, formData);
+      setEditingId(null);
+    } else {
+      await onAdd('suppliers', formData);
+    }
+    setFormData({ name: '', address: '', phone: '', account: '' });
+  };
+
+  const handleCancel = () => {
+    setEditingId(null);
+    setFormData({ name: '', address: '', phone: '', account: '' });
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-xl shadow-lg">
+        <h3 className="text-2xl font-bold mb-4">{editingId ? '거래처 수정' : '거래처 등록'}</h3>
+        <form onSubmit={handleSave} className="space-y-4">
+          <input
+            type="text"
+            name="name"
+            value={formData.name}
+            onChange={handleChange}
+            placeholder="거래처명"
+            className="w-full rounded-md border-gray-300 shadow-sm"
+            required
+          />
+          <input
+            type="text"
+            name="address"
+            value={formData.address}
+            onChange={handleChange}
+            placeholder="주소"
+            className="w-full rounded-md border-gray-300 shadow-sm"
+          />
+          <input
+            type="text"
+            name="phone"
+            value={formData.phone}
+            onChange={handleChange}
+            placeholder="연락처"
+            className="w-full rounded-md border-gray-300 shadow-sm"
+          />
+          <input
+            type="text"
+            name="account"
+            value={formData.account}
+            onChange={handleChange}
+            placeholder="계좌번호"
+            className="w-full rounded-md border-gray-300 shadow-sm"
+          />
+          <div className="flex justify-end space-x-2">
+            {editingId && (
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300"
+              >
+                취소
+              </button>
+            )}
+            <button
+              type="submit"
+              className="px-4 py-2 text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
+            >
+              {editingId ? '수정' : '등록'}
+            </button>
+          </div>
+        </form>
+      </div>
+      <div className="bg-white p-6 rounded-xl shadow-lg">
+        <h3 className="text-2xl font-bold mb-4">거래처 목록</h3>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50"><tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">거래처명</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">연락처</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">주소</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">계좌번호</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+            </tr></thead>
+            <tbody className="bg-white divide-y divide-gray-200">{
+              suppliers.map(sup => (
+                <tr key={sup.id}>
+                  <td className="px-6 py-4 whitespace-nowrap">{sup.name}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">{sup.phone}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">{sup.address}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">{sup.account}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <button
+                      onClick={() => handleEdit(sup)}
+                      className="text-indigo-600 hover:text-indigo-900 mr-2"
+                    >
+                      <Pencil className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => onDelete('suppliers', sup.id)}
+                      className="text-red-600 hover:text-red-900"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+// Factory Management
+const FactoryManagement = ({ factories, onAdd, onUpdate, onDelete }) => {
+  const [formData, setFormData] = useState({ name: '', address: '', phone: '', account: '' });
+  const [editingId, setEditingId] = useState(null);
+
+  const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
+
+  const handleEdit = (factory) => {
+    setEditingId(factory.id);
+    setFormData(factory);
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    if (editingId) {
+      await onUpdate('factories', editingId, formData);
+      setEditingId(null);
+    } else {
+      await onAdd('factories', formData);
+    }
+    setFormData({ name: '', address: '', phone: '', account: '' });
+  };
+
+  const handleCancel = () => {
+    setEditingId(null);
+    setFormData({ name: '', address: '', phone: '', account: '' });
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-xl shadow-lg">
+        <h3 className="text-2xl font-bold mb-4">{editingId ? '공장 수정' : '공장 등록'}</h3>
+        <form onSubmit={handleSave} className="space-y-4">
+          <input
+            type="text"
+            name="name"
+            value={formData.name}
+            onChange={handleChange}
+            placeholder="공장명"
+            className="w-full rounded-md border-gray-300 shadow-sm"
+            required
+          />
+          <input
+            type="text"
+            name="address"
+            value={formData.address}
+            onChange={handleChange}
+            placeholder="주소"
+            className="w-full rounded-md border-gray-300 shadow-sm"
+          />
+          <input
+            type="text"
+            name="phone"
+            value={formData.phone}
+            onChange={handleChange}
+            placeholder="연락처"
+            className="w-full rounded-md border-gray-300 shadow-sm"
+          />
+          <input
+            type="text"
+            name="account"
+            value={formData.account}
+            onChange={handleChange}
+            placeholder="계좌번호"
+            className="w-full rounded-md border-gray-300 shadow-sm"
+          />
+          <div className="flex justify-end space-x-2">
+            {editingId && (
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300"
+              >
+                취소
+              </button>
+            )}
+            <button
+              type="submit"
+              className="px-4 py-2 text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
+            >
+              {editingId ? '수정' : '등록'}
+            </button>
+          </div>
+        </form>
+      </div>
+      <div className="bg-white p-6 rounded-xl shadow-lg">
+        <h3 className="text-2xl font-bold mb-4">공장 목록</h3>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50"><tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">공장명</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">연락처</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">주소</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+            </tr></thead>
+            <tbody className="bg-white divide-y divide-gray-200">{
+              factories.map(factory => (
+                <tr key={factory.id}>
+                  <td className="px-6 py-4 whitespace-nowrap">{factory.name}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">{factory.phone}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">{factory.address}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <button
+                      onClick={() => handleEdit(factory)}
+                      className="text-indigo-600 hover:text-indigo-900 mr-2"
+                    >
+                      <Pencil className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => onDelete('factories', factory.id)}
+                      className="text-red-600 hover:text-red-900"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </td>
+                </tr>
+              ))
+            }</tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default () => (
+  <FirebaseProvider>
+    <App />
+  </FirebaseProvider>
+);
